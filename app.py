@@ -19,16 +19,14 @@ def add_cors_headers(response):
 # ==============================
 # إعدادات football-data.org
 # ==============================
-# يفضل وضع المفتاح كمتغير بيئة (Environment Variable) باسم FOOTBALL_DATA_TOKEN
-# بدلاً من كتابته مباشرة في الكود، لكن تم توفير قيمة افتراضية هنا للتجربة السريعة.
 FOOTBALL_DATA_TOKEN = os.environ.get("FOOTBALL_DATA_TOKEN", "a716c5d5b9614ff89f550e0642fef54d")
 FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
 
-# البطولات الـ 12 المتاحة على الخطة المجانية لـ football-data.org
-# (رمز كل بطولة + اسمها بالعربية)
+# تم إضافة دوري أبطال آسيا (CLI) إلى القائمة
 COMPETITIONS = {
     "WC": "كأس العالم",
     "CL": "دوري أبطال أوروبا",
+    "CLI": "دوري أبطال آسيا",  # <--- دوري أبطال آسيا (ملاحظة: يتطلب خطة مدعومة من المصدر)
     "EC": "بطولة أمم أوروبا",
     "PL": "الدوري الإنجليزي الممتاز",
     "PD": "الدوري الإسباني",
@@ -42,8 +40,7 @@ COMPETITIONS = {
 }
 COMPETITIONS_PARAM = ",".join(COMPETITIONS.keys())
 
-# تطبيع حالات المباراة القادمة من football-data.org إلى رموز بسيطة
-# يستخدمها الفرونت إند (نفس الأسلوب بغض النظر عن مزوّد البيانات)
+# تطبيع حالات المباراة
 STATUS_MAP = {
     "SCHEDULED": "NS",
     "TIMED": "NS",
@@ -71,23 +68,22 @@ STATUS_LABELS_AR = {
 # كاش بسيط في الذاكرة (In-memory cache)
 # ==============================
 _matches_cache = {"data": None, "timestamp": 0}
-CACHE_TTL_SECONDS = 300  # 5 دقائق (طلب واحد فقط لكل تحديث، لا داعي لكاش أطول)
+CACHE_TTL_SECONDS = 300  # 5 دقائق
 
 
 def parse_utc_timestamp(utc_date_str):
-    """يحوّل صيغة ISO8601 (مثل 2026-07-04T16:00:00Z) إلى unix timestamp."""
+    """يحوّل صيغة ISO8601 إلى unix timestamp."""
     dt = datetime.strptime(utc_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     return int(dt.timestamp())
 
 
 def fetch_major_matches_3_days():
     """
-    يجلب مباريات أمس + اليوم + غداً لكل البطولات الكبرى المتاحة على الخطة
-    المجانية لـ football-data.org، بطلب واحد فقط لتوفير حصة الاستخدام اليومية.
+    يجلب مباريات أمس + اليوم + غداً لكل البطولات المحددة
     """
     today_utc = datetime.now(timezone.utc).date()
     date_from = today_utc - timedelta(days=1)   # أمس
-    date_to = today_utc + timedelta(days=2)     # غداً + 1 (dateTo غير شامل، راجع توثيق football-data.org)
+    date_to = today_utc + timedelta(days=2)     # غداً + 1
 
     headers = {"X-Auth-Token": FOOTBALL_DATA_TOKEN}
     params = {
@@ -154,12 +150,6 @@ def home():
 
 @app.route('/api/matches')
 def api_matches():
-    """
-    يرجع مباريات أمس + اليوم + غداً للبطولات الكبرى فقط
-    (كأس العالم، أبطال أوروبا، الدوريات الأوروبية الكبرى، الدوري البرازيلي...).
-    نتائج مخزنة مؤقتاً (كاش) لمدة CACHE_TTL_SECONDS لتقليل عدد الطلبات.
-    استخدم ?refresh=1 لإجبار تحديث الكاش.
-    """
     now = time.time()
     force_refresh = request.args.get("refresh") == "1"
     cache_is_fresh = (
@@ -180,7 +170,7 @@ def api_matches():
         matches = fetch_major_matches_3_days()
         _matches_cache["data"] = matches
         _matches_cache["timestamp"] = now
-        print(f"[matches] fetched {len(matches)} major-league fixtures (yesterday/today/tomorrow)", flush=True)
+        print(f"[matches] fetched {len(matches)} fixtures", flush=True)
         return jsonify({
             "success": True,
             "cached": False,
@@ -189,7 +179,6 @@ def api_matches():
             "matches": matches,
         })
     except requests.exceptions.RequestException as e:
-        # في حال فشل الطلب، أرجع آخر بيانات مخزنة إن وجدت بدل الفشل الكامل
         if _matches_cache["data"] is not None:
             return jsonify({
                 "success": True,
