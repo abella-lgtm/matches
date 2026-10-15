@@ -6,27 +6,20 @@ from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-
 @app.after_request
 def add_cors_headers(response):
-    """يسمح لأي صفحة ويب (مثل واجهتك الأمامية) بجلب البيانات من هذا الـ API."""
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
-
-# ==============================
-# إعدادات football-data.org
-# ==============================
 FOOTBALL_DATA_TOKEN = os.environ.get("FOOTBALL_DATA_TOKEN", "a716c5d5b9614ff89f550e0642fef54d")
 FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
 
-# تم إضافة دوري أبطال آسيا (CLI) إلى القائمة
+# البطولات الـ 12 المدعومة رسمياً في الخطة المجانية
 COMPETITIONS = {
     "WC": "كأس العالم",
     "CL": "دوري أبطال أوروبا",
-    "CLI": "دوري أبطال آسيا",  # <--- دوري أبطال آسيا (ملاحظة: يتطلب خطة مدعومة من المصدر)
     "EC": "بطولة أمم أوروبا",
     "PL": "الدوري الإنجليزي الممتاز",
     "PD": "الدوري الإسباني",
@@ -40,50 +33,29 @@ COMPETITIONS = {
 }
 COMPETITIONS_PARAM = ",".join(COMPETITIONS.keys())
 
-# تطبيع حالات المباراة
 STATUS_MAP = {
-    "SCHEDULED": "NS",
-    "TIMED": "NS",
-    "IN_PLAY": "LIVE",
-    "PAUSED": "HT",
-    "FINISHED": "FT",
-    "POSTPONED": "PST",
-    "SUSPENDED": "SUSP",
-    "CANCELLED": "CANC",
-    "AWARDED": "AWD",
+    "SCHEDULED": "NS", "TIMED": "NS", "IN_PLAY": "LIVE",
+    "PAUSED": "HT", "FINISHED": "FT", "POSTPONED": "PST",
+    "SUSPENDED": "SUSP", "CANCELLED": "CANC", "AWARDED": "AWD",
 }
 
 STATUS_LABELS_AR = {
-    "NS": "لم تبدأ بعد",
-    "LIVE": "مباشر الآن",
-    "HT": "استراحة",
-    "FT": "انتهت المباراة",
-    "PST": "مؤجلة",
-    "SUSP": "معلقة",
-    "CANC": "ملغاة",
-    "AWD": "محسومة",
+    "NS": "لم تبدأ بعد", "LIVE": "مباشر الآن", "HT": "استراحة",
+    "FT": "انتهت المباراة", "PST": "مؤجلة", "SUSP": "معلقة",
+    "CANC": "ملغاة", "AWD": "محسومة",
 }
 
-# ==============================
-# كاش بسيط في الذاكرة (In-memory cache)
-# ==============================
 _matches_cache = {"data": None, "timestamp": 0}
-CACHE_TTL_SECONDS = 300  # 5 دقائق
-
+CACHE_TTL_SECONDS = 300
 
 def parse_utc_timestamp(utc_date_str):
-    """يحوّل صيغة ISO8601 إلى unix timestamp."""
     dt = datetime.strptime(utc_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     return int(dt.timestamp())
 
-
 def fetch_major_matches_3_days():
-    """
-    يجلب مباريات أمس + اليوم + غداً لكل البطولات المحددة
-    """
     today_utc = datetime.now(timezone.utc).date()
-    date_from = today_utc - timedelta(days=1)   # أمس
-    date_to = today_utc + timedelta(days=2)     # غداً + 1
+    date_from = today_utc - timedelta(days=1)
+    date_to = today_utc + timedelta(days=2)
 
     headers = {"X-Auth-Token": FOOTBALL_DATA_TOKEN}
     params = {
@@ -92,12 +64,7 @@ def fetch_major_matches_3_days():
         "competitions": COMPETITIONS_PARAM,
     }
 
-    resp = requests.get(
-        f"{FOOTBALL_DATA_BASE_URL}/matches",
-        headers=headers,
-        params=params,
-        timeout=10,
-    )
+    resp = requests.get(f"{FOOTBALL_DATA_BASE_URL}/matches", headers=headers, params=params, timeout=10)
     resp.raise_for_status()
     payload = resp.json()
 
@@ -112,7 +79,6 @@ def fetch_major_matches_3_days():
 
         score = m.get("score", {}) or {}
         full_time = score.get("fullTime", {}) or {}
-
         home_team = m.get("homeTeam", {}) or {}
         away_team = m.get("awayTeam", {}) or {}
 
@@ -138,63 +104,26 @@ def fetch_major_matches_3_days():
     matches.sort(key=lambda x: x["timestamp"])
     return matches
 
-
 @app.route('/')
 def home():
-    return jsonify({
-        "status": "ok",
-        "message": "Matches summary API is running (football-data.org)",
-        "endpoints": ["/api/matches"],
-    })
-
+    return jsonify({"status": "ok", "message": "Matches summary API is running", "endpoints": ["/api/matches"]})
 
 @app.route('/api/matches')
 def api_matches():
     now = time.time()
     force_refresh = request.args.get("refresh") == "1"
-    cache_is_fresh = (
-        _matches_cache["data"] is not None
-        and (now - _matches_cache["timestamp"]) < CACHE_TTL_SECONDS
-    )
-
-    if not force_refresh and cache_is_fresh:
-        return jsonify({
-            "success": True,
-            "cached": True,
-            "cached_at": _matches_cache["timestamp"],
-            "count": len(_matches_cache["data"]),
-            "matches": _matches_cache["data"],
-        })
+    if not force_refresh and _matches_cache["data"] and (now - _matches_cache["timestamp"]) < CACHE_TTL_SECONDS:
+        return jsonify({"success": True, "cached": True, "matches": _matches_cache["data"]})
 
     try:
         matches = fetch_major_matches_3_days()
         _matches_cache["data"] = matches
         _matches_cache["timestamp"] = now
-        print(f"[matches] fetched {len(matches)} fixtures", flush=True)
-        return jsonify({
-            "success": True,
-            "cached": False,
-            "cached_at": now,
-            "count": len(matches),
-            "matches": matches,
-        })
-    except requests.exceptions.RequestException as e:
-        if _matches_cache["data"] is not None:
-            return jsonify({
-                "success": True,
-                "cached": True,
-                "stale": True,
-                "error": str(e),
-                "cached_at": _matches_cache["timestamp"],
-                "count": len(_matches_cache["data"]),
-                "matches": _matches_cache["data"],
-            })
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "matches": [],
-        }), 502
-
+        return jsonify({"success": True, "cached": False, "count": len(matches), "matches": matches})
+    except Exception as e:
+        if _matches_cache["data"]:
+            return jsonify({"success": True, "cached": True, "stale": True, "matches": _matches_cache["data"]})
+        return jsonify({"success": False, "error": str(e), "matches": []}), 502
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
